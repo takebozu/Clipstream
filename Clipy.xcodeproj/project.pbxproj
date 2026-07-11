@@ -910,7 +910,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = me.takezawa.BoltClip.debug;
 				PRODUCT_NAME = BoltClip;
 				PROVISIONING_PROFILE = "";
@@ -952,7 +952,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = me.takezawa.BoltClip;
 				PRODUCT_NAME = BoltClip;
 				PROVISIONING_PROFILE = "";
