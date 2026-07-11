@@ -11,6 +11,7 @@
 //
 
 import Cocoa
+import CryptoKit
 import SwiftHEXColors
 
 final class CPYClipData: NSObject {
@@ -52,6 +53,32 @@ final class CPYClipData: NSObject {
             hash ^= data.count
         }
         return hash
+    }
+    /// Deterministic content hash that stays the same across app launches.
+    ///
+    /// `hash` above relies on Swift's `String.hash`, which uses a per-launch
+    /// random seed, so it is unsuitable as a persisted identity. This value is
+    /// computed with SHA-256 over the clip's types and content, so duplicate
+    /// detection and "overwrite same history" behave consistently over time.
+    var contentHashString: String {
+        var hasher = SHA256()
+        hasher.update(data: Data(types.map { $0.rawValue }.joined().utf8))
+        if let image = image, let imageData = image.tiffRepresentation {
+            hasher.update(data: imageData)
+        }
+        if !fileNames.isEmpty {
+            hasher.update(data: Data(fileNames.joined(separator: "\u{0}").utf8))
+        } else if !URLs.isEmpty {
+            hasher.update(data: Data(URLs.joined(separator: "\u{0}").utf8))
+        } else if let pdf = PDF {
+            hasher.update(data: pdf)
+        } else if !stringValue.isEmpty {
+            hasher.update(data: Data(stringValue.utf8))
+        }
+        if let rtfData = RTFData {
+            hasher.update(data: rtfData)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
     var primaryType: NSPasteboard.PasteboardType? {
         return types.first

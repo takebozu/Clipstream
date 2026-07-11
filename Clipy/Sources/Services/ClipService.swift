@@ -121,27 +121,38 @@ extension ClipService {
     }
 
     fileprivate func save(with data: CPYClipData) {
-        let container = AppEnvironment.current.modelContainer
-        let context = ModelContext(container)
-
-        // Copy already copied history
-        let hashStr = "\(data.hash)"
-        let isCopySameHistory = AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.copySameHistory)
-        var checkDescriptor = FetchDescriptor<CPYClip>(predicate: #Predicate { $0.dataHash == hashStr })
-        checkDescriptor.fetchLimit = 1
-        if (try? context.fetch(checkDescriptor).first) != nil, !isCopySameHistory { return }
-
         // Don't save empty string history
         if data.isOnlyStringType && data.stringValue.isEmpty { return }
 
-        // Overwrite same history
+        let isCopySameHistory = AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.copySameHistory)
         let isOverwriteHistory = AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.overwriteSameHistory)
-        let savedHash = (isOverwriteHistory) ? data.hash : Int.random(in: 0..<1000000)
+
+        let context = ModelContext(AppEnvironment.current.modelContainer)
+
+        // Stable, collision-free content identity (survives relaunch)
+        let contentKey = data.contentHashString
+
+        // Look for an existing clip with identical content
+        var existingDescriptor = FetchDescriptor<CPYClip>(predicate: #Predicate { $0.contentHash == contentKey })
+        existingDescriptor.fetchLimit = 1
+        if let existingClip = try? context.fetch(existingDescriptor).first {
+            if isOverwriteHistory {
+                // Move the existing entry to the top instead of inserting a duplicate
+                existingClip.updateTime = Int(Date().timeIntervalSince1970)
+                saveContext(context)
+                return
+            }
+            if !isCopySameHistory {
+                // Keeping duplicates is disabled
+                return
+            }
+            // Otherwise fall through and store a new, independent entry
+        }
 
         // Saved time and path
         let unixTime = Int(Date().timeIntervalSince1970)
         let savedPath = CPYUtilities.applicationSupportFolder() + "/\(NSUUID().uuidString).data"
-        // Create clip object
+        // Create clip object with a guaranteed-unique key
         let clip = CPYClip()
         clip.dataPath = savedPath
         if data.stringValue.isEmpty && !data.fileNames.isEmpty {
@@ -149,32 +160,39 @@ extension ClipService {
         } else {
             clip.title = data.stringValue[0...10000]
         }
-        clip.dataHash = "\(savedHash)"
+        clip.dataHash = NSUUID().uuidString
+        clip.contentHash = contentKey
         clip.updateTime = unixTime
         clip.primaryType = data.primaryType?.rawValue ?? ""
 
-        DispatchQueue.main.async {
-            // Save thumbnail image
-            if let thumbnailImage = data.thumbnailImage {
-                PINCache.shared.setObjectAsync(thumbnailImage, forKey: "\(unixTime)", completion: nil)
-                clip.thumbnailPath = "\(unixTime)"
-            }
-            if let colorCodeImage = data.colorCodeImage {
-                PINCache.shared.setObjectAsync(colorCodeImage, forKey: "\(unixTime)", completion: nil)
-                clip.thumbnailPath = "\(unixTime)"
-                clip.isColorCode = true
-            }
-            // Save SwiftData and .data file
-            let mainContext = AppEnvironment.current.modelContainer.mainContext
-            if CPYUtilities.prepareSaveToPath(CPYUtilities.applicationSupportFolder()) {
-                if let archivedData = try? NSKeyedArchiver.archivedData(withRootObject: data, requiringSecureCoding: false) {
-                    let savedURL = URL(fileURLWithPath: savedPath)
-                    if (try? archivedData.write(to: savedURL)) != nil {
-                        mainContext.insert(clip)
-                        try? mainContext.save()
-                    }
-                }
-            }
+        // Save thumbnail image
+        if let thumbnailImage = data.thumbnailImage {
+            PINCache.shared.setObjectAsync(thumbnailImage, forKey: "\(unixTime)", completion: nil)
+            clip.thumbnailPath = "\(unixTime)"
+        }
+        if let colorCodeImage = data.colorCodeImage {
+            PINCache.shared.setObjectAsync(colorCodeImage, forKey: "\(unixTime)", completion: nil)
+            clip.thumbnailPath = "\(unixTime)"
+            clip.isColorCode = true
+        }
+
+        // Save SwiftData and .data file
+        guard CPYUtilities.prepareSaveToPath(CPYUtilities.applicationSupportFolder()) else { return }
+        guard let archivedData = try? NSKeyedArchiver.archivedData(withRootObject: data, requiringSecureCoding: false) else { return }
+        guard (try? archivedData.write(to: URL(fileURLWithPath: savedPath))) != nil else { return }
+
+        context.insert(clip)
+        saveContext(context)
+    }
+
+    /// Saves the context, rolling back and logging on failure so a single failed
+    /// save can never leave the context wedged and silently drop every future clip.
+    private func saveContext(_ context: ModelContext) {
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            NSLog("[BoltClip] Failed to save clipboard history: \(error)")
         }
     }
 
